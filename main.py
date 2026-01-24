@@ -25,6 +25,12 @@ GITHUB_USER = st.secrets.get("GITHUB_USER") or os.environ.get("GITHUB_USER")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO") or os.environ.get("GITHUB_REPO")
 ENCRYPTION_KEY = st.secrets.get("ENCRYPTION_KEY") or os.environ.get("ENCRYPTION_KEY")
 
+# Remove espaços em branco das variáveis
+if GITHUB_USER:
+    GITHUB_USER = GITHUB_USER.strip()
+if GITHUB_REPO:
+    GITHUB_REPO = GITHUB_REPO.strip()
+
 # Nome do arquivo no repositório. Usar extensão .enc deixa claro que está cifrado.
 GITHUB_FILE = "baseaud.csv.enc"
 
@@ -49,6 +55,17 @@ if missing:
         "No Streamlit Cloud adicione ENCRYPTION_KEY, GITHUB_TOKEN, GITHUB_USER e GITHUB_REPO em Secrets."
     )
     st.stop()
+
+# Debug: mostrar valores (sem expor o token completo)
+with st.expander("🔧 Debug - Verificar configurações"):
+    st.write(f"**GITHUB_USER:** `{GITHUB_USER}`")
+    st.write(f"**GITHUB_REPO:** `{GITHUB_REPO}`")
+    st.write(f"**API_URL:** `{API_URL}`")
+    st.write(f"**RAW_URL:** `{RAW_URL}`")
+    if GITHUB_TOKEN:
+        st.write(f"**GITHUB_TOKEN:** Configurado (primeiros 20 chars: `{GITHUB_TOKEN[:20]}...`)")
+    else:
+        st.write("**GITHUB_TOKEN:** ❌ Não configurado")
 
 # Inicializa Fernet (espera-se chave gerada por Fernet.generate_key().decode())
 try:
