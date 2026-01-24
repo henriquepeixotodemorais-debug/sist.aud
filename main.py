@@ -220,7 +220,7 @@ df = load_csv_from_github()
 # ---------------------------------------------------------
 # Se o DataFrame estiver vazio (projeto começando sem base), mostra instrução
 if df.empty:
-    st.warning("Nenhuma base encontrada. Entre com a chave 'sisbase' e faça o upload do CSV para iniciar.")
+    st.warning("Nenhuma base encontrada. Peça ao administrador para atualizar a base.")
     st.stop()
 
 # converte coluna "data e horário" para datetime com dayfirst=True
