@@ -25,12 +25,6 @@ GITHUB_USER = st.secrets.get("GITHUB_USER") or os.environ.get("GITHUB_USER")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO") or os.environ.get("GITHUB_REPO")
 ENCRYPTION_KEY = st.secrets.get("ENCRYPTION_KEY") or os.environ.get("ENCRYPTION_KEY")
 
-# Remove espaços em branco das variáveis
-if GITHUB_USER:
-    GITHUB_USER = GITHUB_USER.strip()
-if GITHUB_REPO:
-    GITHUB_REPO = GITHUB_REPO.strip()
-
 # Nome do arquivo no repositório. Usar extensão .enc deixa claro que está cifrado.
 GITHUB_FILE = "baseaud.csv.enc"
 
@@ -55,17 +49,6 @@ if missing:
         "No Streamlit Cloud adicione ENCRYPTION_KEY, GITHUB_TOKEN, GITHUB_USER e GITHUB_REPO em Secrets."
     )
     st.stop()
-
-# Debug: mostrar valores (sem expor o token completo)
-with st.expander("🔧 Debug - Verificar configurações"):
-    st.write(f"**GITHUB_USER:** `{GITHUB_USER}`")
-    st.write(f"**GITHUB_REPO:** `{GITHUB_REPO}`")
-    st.write(f"**API_URL:** `{API_URL}`")
-    st.write(f"**RAW_URL:** `{RAW_URL}`")
-    if GITHUB_TOKEN:
-        st.write(f"**GITHUB_TOKEN:** Configurado (primeiros 20 chars: `{GITHUB_TOKEN[:20]}...`)")
-    else:
-        st.write("**GITHUB_TOKEN:** ❌ Não configurado")
 
 # Inicializa Fernet (espera-se chave gerada por Fernet.generate_key().decode())
 try:
@@ -179,17 +162,11 @@ def upload_csv_to_github(uploaded_file):
 
     # 1) Verifica se o repo é acessível e obtém branch padrão
     repo_meta = requests.get(f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}", headers=headers)
-    st.write("GET repo status:", repo_meta.status_code)
-    try:
-        st.write("GET repo json:", repo_meta.json())
-    except Exception:
-        st.write("GET repo text:", repo_meta.text)
     if repo_meta.status_code != 200:
         st.error("Repositório inacessível com esse token/owner/repo. Verifique GITHUB_USER, GITHUB_REPO e permissões do token.")
         return
 
     default_branch = repo_meta.json().get("default_branch", "main")
-    st.write("Default branch:", default_branch)
 
     # 2) Prepara conteúdo cifrado
     content = uploaded_file.getvalue()  # bytes do CSV
@@ -206,19 +183,12 @@ def upload_csv_to_github(uploaded_file):
 
     # 4) Tenta obter sha atual (se existir) e inclui no payload para update
     r_get = requests.get(api_url, headers=headers)
-    st.write("GET file status:", r_get.status_code)
     if r_get.status_code == 200:
         sha = r_get.json().get("sha")
         payload["sha"] = sha
-        st.write("Current file sha:", sha)
 
-    # 5) Envia e mostra resposta completa
+    # 5) Envia o arquivo
     put_response = requests.put(api_url, json=payload, headers=headers)
-    st.write("PUT status:", put_response.status_code)
-    try:
-        st.write("PUT json:", put_response.json())
-    except Exception:
-        st.write("PUT text:", put_response.text)
 
     # 6) Se conflito 409, tenta buscar sha de novo e reenviar
     if put_response.status_code == 409:
@@ -226,11 +196,6 @@ def upload_csv_to_github(uploaded_file):
         if new_r.status_code == 200:
             payload["sha"] = new_r.json().get("sha")
             put_response = requests.put(api_url, json=payload, headers=headers)
-            st.write("Retry PUT status:", put_response.status_code)
-            try:
-                st.write("Retry PUT json:", put_response.json())
-            except Exception:
-                st.write("Retry PUT text:", put_response.text)
 
     if put_response.status_code in [200, 201]:
         st.success("CSV cifrado enviado com sucesso ao GitHub! Recarregando...")
@@ -260,7 +225,7 @@ df = load_csv_from_github()
 # ---------------------------------------------------------
 # Se o DataFrame estiver vazio (projeto começando sem base), mostra instrução
 if df.empty:
-    st.warning("Nenhuma base encontrada. Peça ao administrador para atualizar a base.")
+    st.warning("Nenhuma base encontrada. Entre com a chave 'sisbase' e faça o upload do CSV para iniciar.")
     st.stop()
 
 # converte coluna "data e horário" para datetime com dayfirst=True
