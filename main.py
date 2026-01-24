@@ -1,9 +1,9 @@
 import os
+import io
+import base64
+import requests
 import streamlit as st
 import pandas as pd
-import requests
-import base64
-import io
 from cryptography.fernet import Fernet, InvalidToken
 
 # ---------------------------------------------------------
@@ -17,21 +17,23 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# CONFIGURAÇÕES DO GITHUB E CHAVE (st.secrets ou env)
+# SECRETS E VARIÁVEIS DO GITHUB
 # ---------------------------------------------------------
-# Usamos .get para evitar exceção imediata quando rodando localmente sem secrets
+# Use st.secrets no Streamlit Cloud; fallback para variáveis de ambiente
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN")
 GITHUB_USER = st.secrets.get("GITHUB_USER") or os.environ.get("GITHUB_USER")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO") or os.environ.get("GITHUB_REPO")
 ENCRYPTION_KEY = st.secrets.get("ENCRYPTION_KEY") or os.environ.get("ENCRYPTION_KEY")
 
-GITHUB_FILE = "baseaud.csv"
-# RAW_URL e API_URL são construídos mesmo que o arquivo ainda não exista no repo.
-RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/{GITHUB_FILE}" if GITHUB_USER and GITHUB_REPO else None
+# Nome do arquivo no repositório. Usar extensão .enc deixa claro que está cifrado.
+GITHUB_FILE = "baseaud.csv.enc"
+
+# Endpoints (API_URL usado para criar/atualizar; RAW_URL opcional para download direto)
 API_URL = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_FILE}" if GITHUB_USER and GITHUB_REPO else None
+RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/{GITHUB_FILE}" if GITHUB_USER and GITHUB_REPO else None
 
 # ---------------------------------------------------------
-# VALIDAÇÕES INICIAIS (mensagens claras)
+# VALIDAÇÃO INICIAL E FERNET
 # ---------------------------------------------------------
 missing = []
 if not GITHUB_USER:
@@ -43,17 +45,16 @@ if not ENCRYPTION_KEY:
 
 if missing:
     st.error(
-        "Faltam configurações necessárias: " + ", ".join(missing) + ".\n\n"
-        "No ambiente de deploy (Streamlit Cloud) adicione essas chaves em Secrets. "
-        "Para testes locais crie .streamlit/secrets.toml ou exporte variáveis de ambiente."
+        "Faltam configurações: " + ", ".join(missing) + ".\n"
+        "No Streamlit Cloud adicione ENCRYPTION_KEY, GITHUB_TOKEN, GITHUB_USER e GITHUB_REPO em Secrets."
     )
     st.stop()
 
-# inicializa Fernet
+# Inicializa Fernet (espera-se chave gerada por Fernet.generate_key().decode())
 try:
     fernet = Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
 except Exception:
-    st.error("Chave de criptografia inválida. Gere com Fernet.generate_key() e coloque em ENCRYPTION_KEY.")
+    st.error("Chave de criptografia inválida. Gere com Fernet.generate_key() e cole em ENCRYPTION_KEY (ex.: 'g6K8...==').")
     st.stop()
 
 # ---------------------------------------------------------
@@ -81,20 +82,19 @@ EXPECTED_COLUMNS = [
 # ---------------------------------------------------------
 # FUNÇÃO PARA CARREGAR CSV DO GITHUB (DESCRIPTOGRAFA NO CACHE)
 # ---------------------------------------------------------
-@st.cache_data(ttl=1)
+@st.cache_data(ttl=60)
 def load_csv_from_github():
     """
-    Baixa o arquivo do GitHub via API (conteúdo em base64), tenta decodificar e
-    descriptografar com Fernet. Se o arquivo não existir (404), retorna DataFrame vazio
-    com colunas esperadas. Se o arquivo existir mas não for cifrado com a chave,
-    tenta ler como texto plano (compatibilidade).
+    Baixa o arquivo via API (conteúdo em base64), decodifica e tenta descriptografar.
+    Se 404 (arquivo não existe), retorna DataFrame vazio com colunas esperadas.
+    Se descriptografia falhar, tenta interpretar como texto plano (compatibilidade).
     """
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
 
-    # 1) Tenta obter via API (retorna JSON com content em base64)
+    # 1) Tenta obter metadados do arquivo via API
     r = requests.get(API_URL, headers=headers)
     if r.status_code == 404:
-        # repositório sem base ainda — retorna DF vazio com colunas esperadas
+        # arquivo ainda não existe no repo
         return pd.DataFrame(columns=EXPECTED_COLUMNS)
     if r.status_code != 200:
         st.error(f"Erro ao acessar GitHub API: {r.status_code} {r.text}")
@@ -146,51 +146,74 @@ def load_csv_from_github():
     return df.fillna("")
 
 # ---------------------------------------------------------
-# FUNÇÃO DE UPLOAD (CIFRA E ENVIA AO GITHUB) COM RETRY 409
+# FUNÇÃO DE UPLOAD (CIFRA E ENVIA AO GITHUB) COM RETRY E LOG
 # ---------------------------------------------------------
 def upload_csv_to_github(uploaded_file):
     """
-    Recebe UploadedFile do Streamlit, cifra os bytes com Fernet, codifica em base64
-    e envia ao GitHub via API. Em caso de conflito (409), busca SHA novamente e reenvia.
+    Cifra os bytes do uploaded_file com Fernet, codifica em base64 e envia ao GitHub.
+    Faz checagens: repo acessível, obtém default_branch, busca sha atual (se existir),
+    tenta PUT e loga a resposta completa para diagnóstico.
     """
     if not GITHUB_TOKEN:
         st.error("GITHUB_TOKEN não configurado. Não é possível enviar ao GitHub.")
         return
 
-    content = uploaded_file.getvalue()  # bytes do CSV
-    # cifra os bytes
-    encrypted = fernet.encrypt(content)
-    # codifica em base64 para o campo 'content' da API
-    encoded = base64.b64encode(encrypted).decode()
-
     headers = {"Authorization": f"token {GITHUB_TOKEN}"}
 
-    def get_sha():
-        r = requests.get(API_URL, headers=headers)
-        if r.status_code == 200:
-            return r.json().get("sha")
-        return None
+    # 1) Verifica se o repo é acessível e obtém branch padrão
+    repo_meta = requests.get(f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}", headers=headers)
+    st.write("GET repo status:", repo_meta.status_code)
+    try:
+        st.write("GET repo json:", repo_meta.json())
+    except Exception:
+        st.write("GET repo text:", repo_meta.text)
+    if repo_meta.status_code != 200:
+        st.error("Repositório inacessível com esse token/owner/repo. Verifique GITHUB_USER, GITHUB_REPO e permissões do token.")
+        return
 
-    sha = get_sha()
+    default_branch = repo_meta.json().get("default_branch", "main")
+    st.write("Default branch:", default_branch)
 
-    def make_payload(sha_value):
-        payload = {
-            "message": "Atualização automática do CSV (cifrado) via Streamlit",
-            "content": encoded,
-            "branch": "main"
-        }
-        if sha_value:
-            payload["sha"] = sha_value
-        return payload
+    # 2) Prepara conteúdo cifrado
+    content = uploaded_file.getvalue()  # bytes do CSV
+    encrypted = fernet.encrypt(content)
+    encoded = base64.b64encode(encrypted).decode()
 
-    payload = make_payload(sha)
-    put_response = requests.put(API_URL, json=payload, headers=headers)
+    # 3) Monta payload usando branch padrão
+    api_url = API_URL
+    payload = {
+        "message": "Atualização automática do CSV (cifrado) via Streamlit",
+        "content": encoded,
+        "branch": default_branch
+    }
 
-    # Se conflito, tenta buscar SHA de novo e reenviar
+    # 4) Tenta obter sha atual (se existir) e inclui no payload para update
+    r_get = requests.get(api_url, headers=headers)
+    st.write("GET file status:", r_get.status_code)
+    if r_get.status_code == 200:
+        sha = r_get.json().get("sha")
+        payload["sha"] = sha
+        st.write("Current file sha:", sha)
+
+    # 5) Envia e mostra resposta completa
+    put_response = requests.put(api_url, json=payload, headers=headers)
+    st.write("PUT status:", put_response.status_code)
+    try:
+        st.write("PUT json:", put_response.json())
+    except Exception:
+        st.write("PUT text:", put_response.text)
+
+    # 6) Se conflito 409, tenta buscar sha de novo e reenviar
     if put_response.status_code == 409:
-        new_sha = get_sha()
-        payload = make_payload(new_sha)
-        put_response = requests.put(API_URL, json=payload, headers=headers)
+        new_r = requests.get(api_url, headers=headers)
+        if new_r.status_code == 200:
+            payload["sha"] = new_r.json().get("sha")
+            put_response = requests.put(api_url, json=payload, headers=headers)
+            st.write("Retry PUT status:", put_response.status_code)
+            try:
+                st.write("Retry PUT json:", put_response.json())
+            except Exception:
+                st.write("Retry PUT text:", put_response.text)
 
     if put_response.status_code in [200, 201]:
         st.success("CSV cifrado enviado com sucesso ao GitHub! Recarregando...")
@@ -204,13 +227,13 @@ def upload_csv_to_github(uploaded_file):
 # ---------------------------------------------------------
 if password == "sisbase":
     st.header("🗂 Painel de Administração da Base")
-    st.info("Envie um CSV; ele será cifrado localmente e armazenado cifrado no GitHub.")
+    st.info("Envie um CSV; ele será cifrado localmente e armazenado cifrado no GitHub (arquivo: " + GITHUB_FILE + ").")
     uploaded = st.file_uploader("📤 Enviar novo CSV (será cifrado)", type=["csv"])
     if uploaded:
         upload_csv_to_github(uploaded)
     st.stop()
 
-# ---------------------------------------------------------
+    # ---------------------------------------------------------
 # CARREGAR CSV DO GITHUB (DESCRIPTOGRAFA NO CACHE)
 # ---------------------------------------------------------
 df = load_csv_from_github()
@@ -220,7 +243,7 @@ df = load_csv_from_github()
 # ---------------------------------------------------------
 # Se o DataFrame estiver vazio (projeto começando sem base), mostra instrução
 if df.empty:
-    st.warning("Nenhuma base encontrada. Peça ao administrador para atualizar a base.")
+    st.warning("Nenhuma base encontrada. Entre com a chave 'sisbase' e faça o upload do CSV para iniciar.")
     st.stop()
 
 # converte coluna "data e horário" para datetime com dayfirst=True
