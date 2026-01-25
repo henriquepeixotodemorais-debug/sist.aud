@@ -24,7 +24,9 @@ GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN")
 GITHUB_USER = st.secrets.get("GITHUB_USER") or os.environ.get("GITHUB_USER")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO") or os.environ.get("GITHUB_REPO")
 ENCRYPTION_KEY = st.secrets.get("ENCRYPTION_KEY") or os.environ.get("ENCRYPTION_KEY")
-
+SENHA_AUTORIDADES = st.secrets.get("SENHA_AUTORIDADES") or os.environ.get("SENHA_AUTORIDADES")  
+SENHA_BASE = st.secrets.get("SENHA_BASE") or os.environ.get("SENHA_BASE")  
+SENHA_SECRETARIOS = st.secrets.get("SENHA_SECRETARIOS") or os.environ.get("SENHA_SECRETARIOS")  
 # Nome do arquivo no repositório. Usar extensão .enc deixa claro que está cifrado.
 GITHUB_FILE = "baseaud.csv.enc"
 
@@ -207,7 +209,7 @@ def upload_csv_to_github(uploaded_file):
 # ---------------------------------------------------------
 # MODO sisbase — UPLOAD DO CSV (CIFRADO)
 # ---------------------------------------------------------
-if password == "sisbase":
+if password == SENHA_BASE:
     st.header("🗂 Painel de Administração da Base")
     st.info("Envie um CSV; ele será cifrado localmente e armazenado cifrado no GitHub (arquivo: " + GITHUB_FILE + ").")
     uploaded = st.file_uploader("📤 Enviar novo CSV (será cifrado)", type=["csv"])
@@ -306,7 +308,7 @@ def render_day(df_dia, show_sensitive):
 # ---------------------------------------------------------
 # SECRETÁRIOS
 # ---------------------------------------------------------
-if password == "sissecret":
+if password == SENHA_SECRETARIOS:
     st.header("📌 Painel dos Secretários")
     for dia in df["dia"].unique():
         df_dia = df[df["dia"] == dia]
@@ -317,7 +319,7 @@ if password == "sissecret":
 # ---------------------------------------------------------
 # AUTORIDADES
 # ---------------------------------------------------------
-elif password == "sisautoridades":
+elif password == SENHA_AUTORIDADES:
     st.header("⚖ Painel das Autoridades")
     for dia in df["dia"].unique():
         df_dia = df[df["dia"] == dia]
