@@ -265,7 +265,8 @@ def render_process_box(process_df, show_sensitive=False):
         st.markdown(f"**Tipo:** {row0.get('parte a ser ouvida ou tipo de processo','')}")
         link = row0.get("link do processo", "")
         if link:
-            st.link_button(f"[🔗 Link do processo]({link})")
+            st.link_button(f"[🔗 Link do processo]",link)
+            # st.markdown(f"[🔗 Link do processo]({link})")
         st.markdown(f"**Dimensão:** {row0.get('dimensão da audiência','')}")
 
         with st.expander("Resumo dos fatos"):
