@@ -231,11 +231,20 @@ if df.empty:
     st.stop()
 
 # converte coluna "data e horário" para datetime com dayfirst=True
+# df["data e horário"] = pd.to_datetime(df["data e horário"], dayfirst=True, errors="coerce")
+# df["dia"] = df["data e horário"].dt.strftime("%d/%m/%y")
+
+# df = df.sort_values(["dia", "sala de audiência", "data e horário"])
+# df = df.sort_values([ "data e horário","dia", "sala de audiência"])
+from datetime import datetime
+
 df["data e horário"] = pd.to_datetime(df["data e horário"], dayfirst=True, errors="coerce")
 df["dia"] = df["data e horário"].dt.strftime("%d/%m/%y")
 
-# df = df.sort_values(["dia", "sala de audiência", "data e horário"])
-df = df.sort_values([ "data e horário","dia", "sala de audiência"])
+# ordena globalmente por data/hora e sala
+df = df.sort_values(["data e horário", "sala de audiência", "número do processo relacionado"], ascending=True).reset_index(drop=True)
+
+
 
 # ---------------------------------------------------------
 # FILTRO DE SALAS
