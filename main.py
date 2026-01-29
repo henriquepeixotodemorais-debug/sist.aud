@@ -266,7 +266,7 @@ def render_process_box(process_df, show_sensitive=False):
     with st.container():
         dt = row0["data e horário"]
         dt_str = dt.strftime("%d/%m/%Y %H:%M") if pd.notna(dt) else row0.get("data e horário", "")
-        st.markdown(f"### ⏰ {dt_str}")
+        st.markdown(f"#### ⏰ {dt_str}")
         st.markdown(f"**Processo:** {row0.get('número do processo relacionado','')}")
         st.markdown(f"**Tipo:** {row0.get('parte a ser ouvida ou tipo de processo','')}")
         link = row0.get("link do processo", "")
@@ -307,9 +307,13 @@ def render_day(df_dia, show_sensitive):
     cols = st.columns(len(salas))
     for idx, sala in enumerate(salas):
         with cols[idx]:
-            st.markdown(f"### 🏛 Sala {sala}")
+            st.markdown(f"## 🏛 Sala {sala}")
             df_sala = df_dia[df_dia["sala de audiência"] == sala]
-            for processo, bloco in df_sala.groupby("número do processo relacionado"):
+            # st.metric(label="nº processos",value=df_sala.groupby("data e horário").size())
+            # st.markdown(f"{df_sala.groupby('data e horário')['processos'].nunique()}")
+
+            for processo, bloco in df_sala.groupby("data e horário"):
+            # for processo, bloco in df_sala.groupby("número do processo relacionado"):
                 render_process_box(bloco, show_sensitive)
 
 # ---------------------------------------------------------
@@ -318,20 +322,22 @@ def render_day(df_dia, show_sensitive):
 if password == SENHA_SECRETARIOS:
     st.header("📌 Painel dos Secretários")
     for dia in df["dia"].unique():
-        df_dia = df[df["dia"] == dia]
+        # df_dia = df[df["dia"] == dia]
+        df_dia = df[df["dia"] == dia].sort_values(by="data e horário")
         if any(df_dia["sala de audiência"].isin(salas_selecionadas)):
-            st.markdown(f"## 📅 {dia}")
+            st.markdown(f"# 📅 {dia}")
             render_day(df_dia, show_sensitive=True)
 
 # ---------------------------------------------------------
 # AUTORIDADES
 # ---------------------------------------------------------
 elif password == SENHA_AUTORIDADES:
-    st.header("⚖ Painel das Autoridades")
+    st.header("⚖ Painel das Autoridades - Audiências")
     for dia in df["dia"].unique():
-        df_dia = df[df["dia"] == dia]
+        # df_dia = df[df["dia"] == dia]
+        df_dia = df[df["dia"] == dia].sort_values(by="data e horário")
         if any(df_dia["sala de audiência"].isin(salas_selecionadas)):
-            st.markdown(f"## 📅 {dia}")
+            st.markdown(f"# 📅 {dia}")
             render_day(df_dia, show_sensitive=False)
 
 # ---------------------------------------------------------
