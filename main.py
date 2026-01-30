@@ -239,7 +239,8 @@ if df.empty:
 
 df["data e horário"] = pd.to_datetime(df["data e horário"], dayfirst=True, errors="coerce") 
 df["dia"] = df["data e horário"].dt.strftime("%d/%m/%y")
-df = df.sort_values(["dia", "sala de audiência", "data e horário"])
+df = df.sort_values(["sala de audiência", "data e horário"])
+# df = df.sort_values(["dia", "sala de audiência", "data e horário"])
 
 
 # ---------------------------------------------------------
