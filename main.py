@@ -238,9 +238,11 @@ if df.empty:
 # df = df.sort_values([ "dia", "data e horário","sala de audiência"])
 
 df["data e horário"] = pd.to_datetime(df["data e horário"], dayfirst=True, errors="coerce") 
-df["dia"] = df["data e horário"].dt.strftime("%d/%m/%y")
+# df["dia"] = df["data e horário"].dt.nomalize()
+df["dia"] = df["data e horário"].dt.date
+# df["dia"] = df["data e horário"].dt.strftime("%d/%m/%y")
+
 df = df.sort_values(["sala de audiência", "data e horário"])
-# df = df.sort_values(["dia", "sala de audiência", "data e horário"])
 
 
 # ---------------------------------------------------------
@@ -257,6 +259,22 @@ salas_selecionadas = st.multiselect(
 if len(salas_selecionadas) == 0:
     st.warning("Selecione ao menos uma sala.")
     st.stop()
+# ---------------------------------------------------------
+# FILTRO DE DIA
+# ---------------------------------------------------------
+todos_dias = sorted(df["dia"].unique())
+# df["dia"] = df["data e horário"].dt.strftime("%d/%m/%y")
+dias_selecionados = st.multiselect(
+    "Filtrar dia:",
+    options=todos_dias,
+    default=todos_dias,
+    format_func=lambda d: d.strftime("%d/%m/%y")
+
+)
+
+if len(dias_selecionados) == 0:
+    st.warning("Selecione ao menos um dia.")
+    st.stop()
 
 # ---------------------------------------------------------
 # FUNÇÃO PARA MONTAR O BOX DE CADA PROCESSO
@@ -266,7 +284,8 @@ def render_process_box(process_df, show_sensitive=False):
 
     with st.container():
         dt = row0["data e horário"]
-        dt_str = dt.strftime("%d/%m/%Y %H:%M") if pd.notna(dt) else row0.get("data e horário", "")
+        dt_str = dt.strftime("%H:%M") if pd.notna(dt) else row0.get("data e horário", "")
+        # dt_str = dt.strftime("%d/%m/%Y %H:%M") if pd.notna(dt) else row0.get("data e horário", "")
         st.markdown(f"#### ⏰ {dt_str}")
         st.markdown(f"**Processo:** {row0.get('número do processo relacionado','')}")
         st.markdown(f"**Tipo:** {row0.get('parte a ser ouvida ou tipo de processo','')}")
@@ -310,8 +329,8 @@ def render_day(df_dia, show_sensitive):
         with cols[idx]:
             st.markdown(f"## 🏛 Sala {sala}")
             df_sala = df_dia[df_dia["sala de audiência"] == sala]
+            # st.markdown(f"##{len(df_sala["número do processo relacionado"])}")
             st.metric(label="",value="",delta=f"processos: {len(df_sala["número do processo relacionado"])}",delta_color="off")
-            # st.metric(label="nº processos",value=df_sala.groupby("data e horário").size())
             # st.markdown(f"{df_sala.groupby('data e horário')['processos'].nunique()}")
 
             for processo, bloco in df_sala.groupby("data e horário"):
@@ -323,26 +342,33 @@ def render_day(df_dia, show_sensitive):
 # ---------------------------------------------------------
 if password == SENHA_SECRETARIOS:
     st.header("📌 Painel dos Secretários")
-    for dia in df["dia"].unique():
-        # df_dia = df[df["dia"] == dia]
-        df_dia = df[df["dia"] == dia].sort_values(by="data e horário")
+    das = df[df["dia"].isin(dias_selecionados)]
+
+    for dia in sorted(das["dia"].unique()):
+        df_dia = das[das["dia"] == dia].sort_values(by="data e horário")
+
         if any(df_dia["sala de audiência"].isin(salas_selecionadas)):
             st.divider()
-            st.markdown(f"# 📅 {dia}")
+            st.markdown(f"# 📅 {str(dia).split("-")[2]}/{str(dia).split("-")[1]}/{str(dia).split("-")[0]}")
             render_day(df_dia, show_sensitive=True)
+
 
 # ---------------------------------------------------------
 # AUTORIDADES
 # ---------------------------------------------------------
 elif password == SENHA_AUTORIDADES:
     st.header("⚖ Painel das Autoridades - Audiências")
-    for dia in df["dia"].unique():
-        # df_dia = df[df["dia"] == dia]
-        df_dia = df[df["dia"] == dia].sort_values(by="data e horário")
+    das = df[df["dia"].isin(dias_selecionados)]
+
+    for dia in sorted(das["dia"].unique()):
+        df_dia = das[das["dia"] == dia].sort_values(by="data e horário")
+
         if any(df_dia["sala de audiência"].isin(salas_selecionadas)):
             st.divider()
-            st.markdown(f"# 📅 {dia}")
+            # st.markdown(f"# 📅 {dia}")
+            st.markdown(f"# 📅 {str(dia).split("-")[2]}/{str(dia).split("-")[1]}/{str(dia).split("-")[0]}")
             render_day(df_dia, show_sensitive=False)
+
 
 # ---------------------------------------------------------
 # ACESSO NEGADO
