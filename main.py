@@ -86,17 +86,10 @@ EXPECTED_COLUMNS = [
 # ---------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_csv_from_github():
-    """
-    Baixa o arquivo via API (conteúdo em base64), decodifica e tenta descriptografar.
-    Se 404 (arquivo não existe), retorna DataFrame vazio com colunas esperadas.
-    Se descriptografia falhar, tenta interpretar como texto plano (compatibilidade).
-    """
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
 
-    # 1) Tenta obter metadados do arquivo via API
     r = requests.get(API_URL, headers=headers)
     if r.status_code == 404:
-        # arquivo ainda não existe no repo
         return pd.DataFrame(columns=EXPECTED_COLUMNS)
     if r.status_code != 200:
         st.error(f"Erro ao acessar GitHub API: {r.status_code} {r.text}")
@@ -108,44 +101,46 @@ def load_csv_from_github():
         st.error("Conteúdo vazio no GitHub.")
         st.stop()
 
-    # remover quebras de linha e decodificar base64
     content_b64 = "".join(content_b64.splitlines())
     try:
         raw_bytes = base64.b64decode(content_b64)
     except Exception as e:
-        st.error(f"Erro ao decodificar base64 do conteúdo: {e}")
+        st.error(f"Erro ao decodificar base64: {e}")
         st.stop()
 
-    # tenta descriptografar; se falhar, tenta interpretar como texto plano (fallback)
+    # tenta descriptografar
     try:
         plain_bytes = fernet.decrypt(raw_bytes)
-        text = plain_bytes.decode("utf-8")
+        text = plain_bytes.decode("utf-8", errors="replace")
     except InvalidToken:
-        # fallback: assume que raw_bytes é texto UTF-8 (arquivo legado não cifrado)
-        try:
-            text = raw_bytes.decode("utf-8")
-        except Exception:
-            st.error("Arquivo no GitHub não está cifrado com a chave fornecida e não é texto UTF-8.")
-            st.stop()
+        # fallback: arquivo não cifrado
+        text = raw_bytes.decode("utf-8", errors="replace")
 
-    # Ler CSV aceitando , ou ;
+    # remove BOM se existir
+    if text.startswith("\ufeff"):
+        text = text.replace("\ufeff", "", 1)
+
+    # normaliza quebras de linha
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # tenta ler com vírgula
     try:
-        df = pd.read_csv(io.StringIO(text), dtype=str, sep=None, engine="python")
+        df = pd.read_csv(io.StringIO(text), dtype=str, sep=",")
+        if df.shape[1] == 1:
+            raise ValueError("provavelmente não é vírgula")
     except Exception:
-        try:
-            df = pd.read_csv(io.StringIO(text), dtype=str, sep=",")
-        except Exception:
-            df = pd.read_csv(io.StringIO(text), dtype=str, sep=";")
+        # tenta ler com ponto e vírgula
+        df = pd.read_csv(io.StringIO(text), dtype=str, sep=";")
 
-    # garantir colunas esperadas (se faltar, adiciona vazias)
+    # garante colunas esperadas
     for col in EXPECTED_COLUMNS:
         if col not in df.columns:
             df[col] = ""
 
-    # manter apenas colunas esperadas na ordem correta
     df = df[EXPECTED_COLUMNS]
 
     return df.fillna("")
+
 
 # ---------------------------------------------------------
 # FUNÇÃO DE UPLOAD (CIFRA E ENVIA AO GITHUB) COM RETRY E LOG
