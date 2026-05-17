@@ -5,6 +5,8 @@ import requests
 import streamlit as st
 import pandas as pd
 from cryptography.fernet import Fernet, InvalidToken
+import re
+import openpyxl
 
 # ---------------------------------------------------------
 # CONFIGURAÇÃO DO TEMA
@@ -336,16 +338,312 @@ def render_day(df_dia, show_sensitive):
 # SECRETÁRIOS
 # ---------------------------------------------------------
 if password == SENHA_SECRETARIOS:
-    st.header("📌 Painel dos Secretários")
-    das = df[df["dia"].isin(dias_selecionados)]
+    st.set_page_config(page_title="Painel de Salas e Processos", layout="wide")
 
-    for dia in sorted(das["dia"].unique()):
-        df_dia = das[das["dia"] == dia].sort_values(by="data e horário")
+    RE_DATE_TIME = re.compile(r"(\d{2}/\d{2}/\d{2})\s+(\d{2}:\d{2})")
+    RE_URL = re.compile(r"(https?://\S+)", re.IGNORECASE)
 
-        if any(df_dia["sala de audiência"].isin(salas_selecionadas)):
-            st.divider()
-            st.markdown(f"# 📅 {str(dia).split("-")[2]}/{str(dia).split("-")[1]}/{str(dia).split("-")[0]}")
-            render_day(df_dia, show_sensitive=True)
+    # =========================
+    # FIELD (copiar nativo reduzido)
+    # =========================
+    def show_field(label, value):
+        v = "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value)
+        st.markdown(
+            f"<div style='font-size:12px; font-weight:600; color:#666; margin-top:2px;'>{label}</div>",
+            unsafe_allow_html=True
+        )
+        st.code(v)
+
+    # =========================
+    # WHATSAPP (telefones únicos + 1 link por número)
+    # =========================
+    def digits_only(s):
+        return re.sub(r"\D+", "", str(s))
+
+
+    def whatsapp_links(contatos):
+        if contatos is None or (isinstance(contatos, float) and pd.isna(contatos)):
+            return []
+
+        raw = str(contatos)
+
+        encontrados = re.findall(r"(?:\+?55)?\D?\(?\d{2}\)?\s?\d{4,5}-?\d{4}", raw)
+
+        resultado = []
+        vistos = set()
+
+        for n in encontrados:
+            numero = digits_only(n)
+            if not numero:
+                continue
+
+            if len(numero) in (10, 11) and not numero.startswith("55"):
+                numero = "55" + numero
+
+            url = f"https://wa.me/{numero}"
+
+            if url in vistos:
+                continue
+
+            vistos.add(url)
+            resultado.append((n.strip(), url))
+
+        return resultado
+
+    # =========================
+    # PARSING
+    # =========================
+    def is_header(nome):
+        if pd.isna(nome):
+            return False
+        return not str(nome).strip().startswith("(")
+
+
+    def extract_info(tl):
+        if pd.isna(tl):
+            return None, None, None
+
+        s = str(tl)
+
+        m = RE_DATE_TIME.search(s)
+        data = m.group(1) if m else None
+        hora = m.group(2) if m else None
+
+        u = RE_URL.search(s)
+        link = u.group(1) if u else None
+
+        return data, hora, link
+
+
+    def build_index(df):
+        rows = []
+
+        # sort=False para respeitar a ordem original do arquivo
+        for proc, g in df.groupby("Processos", sort=False):
+            g = g.reset_index(drop=True)
+
+            header_idx = None
+            for i in range(len(g)):
+                if is_header(g.loc[i, "Nome"]):
+                    header_idx = i
+                    break
+
+            if header_idx is None:
+                continue
+
+            header = g.loc[header_idx]
+            data, hora, link = extract_info(header.get("tl"))
+
+            sala_raw = header.get("sala")
+            sala = str(int(sala_raw)) if sala_raw is not None and not (isinstance(sala_raw, float) and pd.isna(sala_raw)) else None
+
+            partes = g.drop(index=header_idx)
+
+            rows.append({
+                "Processos": str(proc),
+                "sala": sala,
+                "data": data,
+                "hora": hora,
+                "link": link,
+                "partes": partes
+            })
+
+        return pd.DataFrame(rows)
+
+
+    def filter_index(idx, salas, datas, processos):
+        q = idx.copy()
+
+        if salas:
+            q = q[q["sala"].isin(salas)]
+
+        if datas:
+            q = q[q["data"].isin(datas)]
+
+        if processos:
+            q = q[q["Processos"].isin(processos)]
+
+        return q
+
+    # =========================
+    # CACHE
+    # =========================
+    @st.cache_data(persist="disk")
+    def load_df(file_bytes):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+
+
+    @st.cache_data(persist="disk")
+    def load_idx(df):
+        return build_index(df)
+
+    # =========================
+    # APP
+    # =========================
+    file = st.file_uploader("Envie o Excel")
+
+    st.title("📌 Painel dos Secretários")
+
+    if not file:
+        st.stop()
+
+    df = load_df(file.getvalue())
+    idx = load_idx(df)
+
+    # =========================
+    # FILTROS (sidebar com separação clara)
+    # =========================
+    st.sidebar.markdown("## 🎛️ Filtros")
+    st.sidebar.divider()
+
+    salas_all = sorted(idx["sala"].dropna().unique().tolist())
+    datas_all = sorted(idx["data"].dropna().unique().tolist())
+
+    st.sidebar.markdown("### 🏛️ Salas")
+    salas_sel = st.sidebar.multiselect("Selecionar salas", salas_all, salas_all)
+
+    st.sidebar.divider()
+
+    st.sidebar.markdown("### 📅 Datas")
+    datas_sel = []
+    for d in datas_all:
+        if st.sidebar.checkbox(d, True):
+            datas_sel.append(d)
+
+    st.sidebar.divider()
+
+    # ✅ Processos só depois de aplicar Sala + Data
+    idx_sd = idx.copy()
+    if salas_sel:
+        idx_sd = idx_sd[idx_sd["sala"].isin(salas_sel)]
+    if datas_sel:
+        idx_sd = idx_sd[idx_sd["data"].isin(datas_sel)]
+
+    processos_disponiveis = sorted(idx_sd["Processos"].dropna().unique().tolist())
+
+    st.sidebar.markdown("### 📄 Processos (após Sala + Data)")
+    processos_sel = st.sidebar.multiselect(
+        "Selecionar processos",
+        processos_disponiveis,
+        processos_disponiveis
+    )
+
+    view = filter_index(idx, salas_sel, datas_sel, processos_sel)
+
+    if view.empty:
+        st.warning("Nada para exibir.")
+        st.stop()
+
+    # =========================
+    # RENDER
+    # =========================
+    cols = st.columns(len(salas_sel)) if salas_sel else [st.container()]
+
+    for col, sala in zip(cols, salas_sel):
+        with col:
+            # ✅ Sala com mais destaque
+            st.markdown(
+                f"<div style='font-size:30px; font-weight:900; margin:2px 0 6px 0;'>Sala {sala}</div>",
+                unsafe_allow_html=True
+            )
+
+            base = view[view["sala"] == sala].copy()
+
+            for data in sorted(base["data"].dropna().unique()):
+                # ✅ Data com destaque
+                st.markdown(
+                    f"<div style='font-size:22px; font-weight:800; margin:10px 0 6px 0;'>📅 {data}</div>",
+                    unsafe_allow_html=True
+                )
+
+                dia = base[base["data"] == data].copy()
+
+                # ✅ Ordena por horário (e mantém o resto estável)
+                dia["ordem"] = dia["hora"].fillna("99:99")
+                dia = dia.sort_values("ordem").drop(columns=["ordem"])
+
+                for _, row in dia.iterrows():
+                    # ✅ Box do processo
+                    with st.container(border=True):
+                        hora = row.get("hora") or ""
+                        proc = row.get("Processos") or ""
+                        link = row.get("link") or ""
+
+                        # ✅ Hora com destaque
+                        st.markdown(
+                            f"<div style='font-size:20px; font-weight:900; margin:2px 0 8px 0;'>Hora: {hora}</div>",
+                            unsafe_allow_html=True
+                        )
+
+                        # ✅ Processo com destaque
+                        st.markdown(
+                            f"<div style='font-size:18px; font-weight:900; margin:2px 0 10px 0;'>Processo: {proc}</div>",
+                            unsafe_allow_html=True
+                        )
+
+                        # ✅ Abrir sala bem destacado
+                        if link:
+                            st.markdown(
+                                f"<div style='font-size:16px; font-weight:800; margin:0 0 8px 0;'>"
+                                f"<a href='{link}' target='_blank'>🔗 Abrir sala</a>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+
+                        # ✅ “Copiar todos os nomes” (estável): campo com todos os nomes
+                        partes_df = row.get("partes")
+                        if partes_df is not None and len(partes_df) > 0:
+                            nomes = []
+                            for n in partes_df.get("Nome", pd.Series(dtype=str)).tolist():
+                                if n is None or (isinstance(n, float) and pd.isna(n)):
+                                    continue
+                                s = str(n).strip()
+                                if s:
+                                    nomes.append(s)
+
+                            if nomes:
+                                st.markdown(
+                                    "<div style='font-size:12px; font-weight:700; color:#444; margin-top:6px;'>"
+                                    "Copiar todos os nomes.</div>",
+                                    unsafe_allow_html=True
+                                )
+                                st.code("\n".join(nomes))
+
+                        # Partes (menor destaque)
+                        if partes_df is None or len(partes_df) == 0:
+                            st.caption("—")
+                            continue
+
+                        for _, part in partes_df.reset_index(drop=True).iterrows():
+                            st.divider()
+
+                            show_field("Nome", part.get("Nome"))
+                            show_field("Dados da parte", part.get("Dados da parte"))
+                            show_field("Endereço", part.get("Endereço"))
+
+                            st.markdown(
+                                "<div style='font-size:12px; font-weight:600; color:#666; margin-top:2px;'>Contatos</div>",
+                                unsafe_allow_html=True
+                            )
+
+                            links = whatsapp_links(part.get("Contatos"))
+
+                            if links:
+                                for txt, url in links:
+                                    st.markdown(f"- {txt} → {url}")
+                            else:
+                                st.caption("—")
+
+                            show_field("Copiar contatos", part.get("Contatos"))
+
+                            if not pd.isna(part.get("lc")):
+                                show_field("Local", part.get("lc"))
+
+                            if not pd.isna(part.get("et")):
+                                show_field("Entrevistador", part.get("et"))
+
+                            if not pd.isna(part.get("tl da intimação")):
+                                show_field("Telefone da intimação", part.get("tl da intimação"))
 
 
 # ---------------------------------------------------------
